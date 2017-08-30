@@ -1,4 +1,3 @@
-EIP := $(shell minikube ip)
 HUB :=
 REPO := kinvolk
 IMAGE := $(if $(HUB),$(HUB)/)$(REPO)/habitat-operator
@@ -18,6 +17,7 @@ test:
 	go test -v $(shell go list ./... | grep -v /vendor/ | grep -v /test/)
 
 e2e:
+	@: ${EIP := $(shell minikube ip)}
 	@if test 'x$(TESTIMAGE)' = 'x'; then echo "TESTIMAGE must be passed."; exit 1; fi
 	go test -v ./test/e2e/ --image "$(TESTIMAGE)" --kubeconfig ~/.kube/config --ip "$(EIP)"
 
