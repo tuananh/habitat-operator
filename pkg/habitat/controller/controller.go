@@ -72,6 +72,7 @@ type HabitatController struct {
 	sgInformer         cache.SharedIndexInformer
 	deploymentInformer cache.SharedIndexInformer
 	secretInformer     cache.SharedIndexInformer
+	configMapInformer  cache.SharedIndexInformer
 }
 
 type Config struct {
@@ -110,11 +111,13 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	hc.cacheSG()
 	hc.cacheDeployment()
 	hc.cacheSecret()
+	hc.cacheConfigMaps()
 
 	// TODO: should all of them have the same ctx?
 	go hc.sgInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
 	go hc.secretInformer.Run(ctx.Done())
+	go hc.configMapInformer.Run(ctx.Done())
 
 	hc.watchPods(ctx)
 
@@ -208,6 +211,32 @@ func (hc *HabitatController) cacheSecret() {
 	})
 }
 
+func (hc *HabitatController) cacheConfigMaps() {
+	ls := labels.SelectorFromSet(labels.Set(map[string]string{
+		crv1.HabitatLabel:  "true",
+		crv1.TopologyLabel: "leader",
+	}))
+
+	source := newListWatchFromClientWithLabels(
+		hc.config.KubernetesClientset.CoreV1().RESTClient(),
+		"configmaps",
+		apiv1.NamespaceAll,
+		ls)
+
+	hc.configMapInformer = cache.NewSharedIndexInformer(
+		source,
+		&apiv1.ConfigMap{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
+
+	hc.configMapInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handleCMAdd,
+		UpdateFunc: hc.handleCMUpdate,
+		DeleteFunc: hc.handleCMDelete,
+	})
+}
+
 func (hc *HabitatController) handleDeployAdd(obj interface{}) {
 	fmt.Println("add deployment")
 	fmt.Println(obj)
@@ -237,6 +266,22 @@ func (hc *HabitatController) handleSecretUpdate(old, curr interface{}) {
 
 func (hc *HabitatController) handleSecretDelete(obj interface{}) {
 	fmt.Println("delete secret")
+	fmt.Println(obj)
+}
+
+func (hc *HabitatController) handleCMAdd(obj interface{}) {
+	fmt.Println("add cm")
+	fmt.Println(obj)
+}
+
+func (hc *HabitatController) handleCMUpdate(old, curr interface{}) {
+	fmt.Println("update cm")
+	fmt.Println(old)
+	fmt.Println(curr)
+}
+
+func (hc *HabitatController) handleCMDelete(obj interface{}) {
+	fmt.Println("delete cm")
 	fmt.Println(obj)
 }
 
