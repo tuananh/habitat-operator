@@ -69,8 +69,7 @@ type HabitatController struct {
 	// delay, so that jobs in a crashing loop don't fill the queue.
 	queue workqueue.RateLimitingInterface
 
-	// store is the cache of ServiceGroups retrieved by the ListWatcher.
-	store cache.Store
+	sgInformer cache.SharedIndexInformer
 }
 
 type Config struct {
@@ -106,7 +105,9 @@ func New(config Config, logger log.Logger) (*HabitatController, error) {
 func (hc *HabitatController) Run(ctx context.Context) error {
 	level.Info(hc.logger).Log("msg", "Watching Service Group objects")
 
-	hc.watchServiceGroups(ctx)
+	hc.cacheSG()
+
+	go hc.sgInformer.Run(ctx.Done())
 
 	hc.watchPods(ctx)
 
@@ -120,51 +121,41 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (hc *HabitatController) watchServiceGroups(ctx context.Context) {
+func (hc *HabitatController) cacheSG() {
 	source := cache.NewListWatchFromClient(
 		hc.config.HabitatClient,
 		crv1.ServiceGroupResourcePlural,
 		apiv1.NamespaceAll,
 		fields.Everything())
 
-	store, k8sController := cache.NewInformer(
+	hc.sgInformer = cache.NewSharedIndexInformer(
 		source,
-
-		// The object type.
 		&crv1.ServiceGroup{},
-
-		// resyncPeriod
-		// Every resyncPeriod, all resources in the cache will retrigger events.
-		// Set to 0 to disable the resync.
 		resyncPeriod,
+		cache.Indexers{},
+	)
 
-		// Your custom resource event handlers.
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: hc.enqueueSG,
-			UpdateFunc: func(oldObj, newObj interface{}) {
-				oldSG, ok := oldObj.(*crv1.ServiceGroup)
-				if !ok {
-					level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", oldObj)
-					return
-				}
+	hc.sgInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: hc.enqueueSG,
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			oldSG, ok := oldObj.(*crv1.ServiceGroup)
+			if !ok {
+				level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", oldObj)
+				return
+			}
 
-				newSG, ok := newObj.(*crv1.ServiceGroup)
-				if !ok {
-					level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", newObj)
-					return
-				}
+			newSG, ok := newObj.(*crv1.ServiceGroup)
+			if !ok {
+				level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", newObj)
+				return
+			}
 
-				if hc.serviceGroupNeedsUpdate(oldSG, newSG) {
-					hc.enqueueSG(newSG)
-				}
-			},
-			DeleteFunc: hc.enqueueSG,
-		})
-
-	hc.store = store
-
-	// The k8sController will start processing events from the API.
-	go k8sController.Run(ctx.Done())
+			if hc.serviceGroupNeedsUpdate(oldSG, newSG) {
+				hc.enqueueSG(newSG)
+			}
+		},
+		DeleteFunc: hc.enqueueSG,
+	})
 }
 
 func (hc *HabitatController) handleServiceGroupCreation(sg *crv1.ServiceGroup) error {
@@ -641,7 +632,7 @@ func (hc *HabitatController) processNextItem() bool {
 // * a ServiceGroup was created/updated/deleted
 // * a Pod was created/updated/deleted
 func (hc *HabitatController) syncServiceGroup(key string) error {
-	obj, exists, err := hc.store.GetByKey(key)
+	obj, exists, err := hc.sgInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return err
 	}
@@ -688,7 +679,7 @@ func (hc *HabitatController) podNeedsUpdate(oldPod, newPod *apiv1.Pod) bool {
 func (hc *HabitatController) getServiceGroupFromPod(pod *apiv1.Pod) (*crv1.ServiceGroup, error) {
 	key := serviceGroupKeyFromPod(pod)
 
-	obj, exists, err := hc.store.GetByKey(key)
+	obj, exists, err := hc.sgInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -698,7 +689,7 @@ func (hc *HabitatController) getServiceGroupFromPod(pod *apiv1.Pod) (*crv1.Servi
 
 	sg, ok := obj.(*crv1.ServiceGroup)
 	if !ok {
-		return nil, fmt.Errorf("unknown object type in store: %v", obj)
+		return nil, fmt.Errorf("unknown object type in Service Group cache: %v", obj)
 	}
 
 	return sg, nil
