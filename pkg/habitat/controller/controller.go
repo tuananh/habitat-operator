@@ -112,14 +112,13 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	hc.cacheDeployment()
 	hc.cacheSecret()
 	hc.cacheConfigMaps()
+	hc.watchPods(ctx)
 
 	// TODO: should all of them have the same ctx?
 	go hc.sgInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
 	go hc.secretInformer.Run(ctx.Done())
 	go hc.configMapInformer.Run(ctx.Done())
-
-	hc.watchPods(ctx)
 
 	// Start the synchronous queue consumer.
 	go hc.worker()
@@ -480,6 +479,7 @@ func (hc *HabitatController) watchPods(ctx context.Context) {
 			DeleteFunc: hc.onPodDelete,
 		})
 
+	// TODO: maybe return controller and run it with others?
 	go c.Run(ctx.Done())
 }
 
