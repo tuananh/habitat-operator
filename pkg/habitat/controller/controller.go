@@ -71,6 +71,7 @@ type HabitatController struct {
 
 	sgInformer         cache.SharedIndexInformer
 	deploymentInformer cache.SharedIndexInformer
+	secretInformer     cache.SharedIndexInformer
 }
 
 type Config struct {
@@ -108,9 +109,12 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 
 	hc.cacheSG()
 	hc.cacheDeployment()
+	hc.cacheSecret()
 
+	// TODO: should all of them have the same ctx?
 	go hc.sgInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
+	go hc.secretInformer.Run(ctx.Done())
 
 	hc.watchPods(ctx)
 
@@ -183,6 +187,27 @@ func (hc *HabitatController) cacheDeployment() {
 	})
 }
 
+func (hc *HabitatController) cacheSecret() {
+	source := cache.NewListWatchFromClient(
+		hc.config.KubernetesClientset.Core().RESTClient(),
+		"secrets",
+		apiv1.NamespaceAll,
+		fields.Everything())
+
+	hc.secretInformer = cache.NewSharedIndexInformer(
+		source,
+		&apiv1.Secret{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
+
+	hc.secretInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handleSecretAdd,
+		UpdateFunc: hc.handleSecretUpdate,
+		DeleteFunc: hc.handleSecretDelete,
+	})
+}
+
 func (hc *HabitatController) handleDeployAdd(obj interface{}) {
 	fmt.Println("add deployment")
 	fmt.Println(obj)
@@ -196,6 +221,22 @@ func (hc *HabitatController) handleDeployUpdate(old, curr interface{}) {
 
 func (hc *HabitatController) handleDeployDelete(obj interface{}) {
 	fmt.Println("delete deployment")
+	fmt.Println(obj)
+}
+
+func (hc *HabitatController) handleSecretAdd(obj interface{}) {
+	fmt.Println("add secret")
+	fmt.Println(obj)
+}
+
+func (hc *HabitatController) handleSecretUpdate(old, curr interface{}) {
+	fmt.Println("update secret")
+	fmt.Println(old)
+	fmt.Println(curr)
+}
+
+func (hc *HabitatController) handleSecretDelete(obj interface{}) {
+	fmt.Println("delete secret")
 	fmt.Println(obj)
 }
 
