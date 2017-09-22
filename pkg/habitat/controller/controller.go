@@ -69,8 +69,12 @@ type HabitatController struct {
 	// delay, so that jobs in a crashing loop don't fill the queue.
 	queue workqueue.RateLimitingInterface
 
-	// store is the cache of Habitats retrieved by the ListWatcher.
-	store cache.Store
+	sgInformer         cache.SharedIndexInformer
+	deploymentInformer cache.SharedIndexInformer
+	secretInformer     cache.SharedIndexInformer
+	configMapInformer  cache.SharedIndexInformer
+	// Pod cache to use in events and other places where we get. And only use get from api for running pods func.
+	podInformer cache.SharedIndexInformer
 }
 
 type Config struct {
@@ -106,9 +110,18 @@ func New(config Config, logger log.Logger) (*HabitatController, error) {
 func (hc *HabitatController) Run(ctx context.Context) error {
 	level.Info(hc.logger).Log("msg", "Watching Habitat objects")
 
-	hc.watchHabitats(ctx)
+	hc.cacheSG()
+	hc.cacheDeployment()
+	hc.cacheSecret()
+	hc.cacheConfigMap()
+	hc.cachePods()
 
-	hc.watchPods(ctx)
+	// TODO: should all of them have the same ctx?
+	go hc.sgInformer.Run(ctx.Done())
+	go hc.deploymentInformer.Run(ctx.Done())
+	go hc.secretInformer.Run(ctx.Done())
+	go hc.configMapInformer.Run(ctx.Done())
+	go hc.podInformer.Run(ctx.Done())
 
 	// Start the synchronous queue consumer.
 	go hc.worker()
@@ -120,51 +133,251 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (hc *HabitatController) watchHabitats(ctx context.Context) {
+func (hc *HabitatController) cacheSG() {
 	source := cache.NewListWatchFromClient(
 		hc.config.HabitatClient,
 		crv1.HabitatResourcePlural,
 		apiv1.NamespaceAll,
 		fields.Everything())
 
-	store, k8sController := cache.NewInformer(
+	hc.sgInformer = cache.NewSharedIndexInformer(
 		source,
 
 		// The object type.
 		&crv1.Habitat{},
-
-		// resyncPeriod
-		// Every resyncPeriod, all resources in the cache will retrigger events.
-		// Set to 0 to disable the resync.
 		resyncPeriod,
+		cache.Indexers{},
+	)
 
-		// Your custom resource event handlers.
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: hc.enqueueHabitat,
-			UpdateFunc: func(oldObj, newObj interface{}) {
-				oldHabitat, ok := oldObj.(*crv1.Habitat)
-				if !ok {
-					level.Error(hc.logger).Log("msg", "Failed to type assert Habitat", "obj", oldObj)
-					return
-				}
+	hc.sgInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handleSGAdd,
+		UpdateFunc: hc.handleSGUpdate,
+		DeleteFunc: hc.handleSGDelete,
+	})
+}
 
-				newHabitat, ok := newObj.(*crv1.Habitat)
-				if !ok {
-					level.Error(hc.logger).Log("msg", "Failed to type assert Habitat", "obj", newObj)
-					return
-				}
+func (hc *HabitatController) cacheDeployment() {
+	// TODO: Do we need to add field selector/label selector.
+	source := cache.NewListWatchFromClient(
+		hc.config.KubernetesClientset.AppsV1beta1().RESTClient(),
+		"deployments",
+		apiv1.NamespaceAll,
+		fields.Everything())
 
-				if hc.habitatNeedsUpdate(oldHabitat, newHabitat) {
-					hc.enqueueHabitat(newHabitat)
-				}
-			},
-			DeleteFunc: hc.enqueueHabitat,
-		})
+	hc.deploymentInformer = cache.NewSharedIndexInformer(
+		source,
+		&appsv1beta1.Deployment{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
 
-	hc.store = store
+	hc.deploymentInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handleDeployAdd,
+		UpdateFunc: hc.handleDeployUpdate,
+		DeleteFunc: hc.handleDeployDelete,
+	})
+}
 
-	// The k8sController will start processing events from the API.
-	go k8sController.Run(ctx.Done())
+func (hc *HabitatController) cacheSecret() {
+	source := cache.NewListWatchFromClient(
+		hc.config.KubernetesClientset.Core().RESTClient(),
+		"secrets",
+		apiv1.NamespaceAll,
+		fields.Everything())
+
+	hc.secretInformer = cache.NewSharedIndexInformer(
+		source,
+		&apiv1.Secret{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
+
+	hc.secretInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handleSecretAdd,
+		UpdateFunc: hc.handleSecretUpdate,
+		DeleteFunc: hc.handleSecretDelete,
+	})
+}
+
+func (hc *HabitatController) cacheConfigMap() {
+	ls := labels.SelectorFromSet(labels.Set(map[string]string{
+		crv1.HabitatLabel:  "true",
+		crv1.TopologyLabel: "leader",
+	}))
+
+	source := newListWatchFromClientWithLabels(
+		hc.config.KubernetesClientset.CoreV1().RESTClient(),
+		"configmaps",
+		apiv1.NamespaceAll,
+		ls)
+
+	hc.configMapInformer = cache.NewSharedIndexInformer(
+		source,
+		&apiv1.ConfigMap{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
+
+	hc.configMapInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handleCMAdd,
+		UpdateFunc: hc.handleCMUpdate,
+		DeleteFunc: hc.handleCMDelete,
+	})
+}
+
+func (hc *HabitatController) cachePods() {
+	ls := labels.SelectorFromSet(labels.Set(map[string]string{"habitat": "true"}))
+
+	source := newListWatchFromClientWithLabels(
+		hc.config.KubernetesClientset.CoreV1().RESTClient(),
+		"pods",
+		apiv1.NamespaceAll,
+		ls)
+
+	hc.podInformer = cache.NewSharedIndexInformer(
+		source,
+		&apiv1.Pod{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
+
+	hc.podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.onPodAdd,
+		UpdateFunc: hc.onPodUpdate,
+		DeleteFunc: hc.onPodDelete,
+	})
+}
+func (hc *HabitatController) handleSGAdd(obj interface{}) {
+	hc.enqueue(obj)
+}
+
+func (hc *HabitatController) handleSGUpdate(oldObj, newObj interface{}) {
+	fmt.Println("update SG")
+	fmt.Println(oldObj)
+	fmt.Println(newObj)
+	oldSG, ok := oldObj.(*crv1.Habitat)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", oldObj)
+		return
+	}
+
+	newSG, ok := newObj.(*crv1.Habitat)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", newObj)
+		return
+	}
+
+	if hc.habitatNeedsUpdate(oldSG, newSG) {
+		hc.enqueue(newSG)
+	}
+}
+
+func (hc *HabitatController) handleSGDelete(obj interface{}) {
+	hc.enqueue(obj)
+}
+
+func (hc *HabitatController) handleDeployAdd(obj interface{}) {
+	// Check if current deployment is of interest,
+	d, ok := obj.(*appsv1beta1.Deployment)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", obj)
+		return
+	}
+
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
+	fmt.Println("no deployment added")
+}
+
+func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
+	// check if it belongs to a SG, by label.
+	d, ok := newObj.(*appsv1beta1.Deployment)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", newObj)
+		return
+	}
+
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(newObj)
+	}
+}
+
+func (hc *HabitatController) handleDeployDelete(obj interface{}) {
+	// check if it belongs to a SG, by label.
+	d, ok := obj.(*appsv1beta1.Deployment)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", obj)
+		return
+	}
+
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
+}
+
+func (hc *HabitatController) handleSecretAdd(obj interface{}) {
+	// check if it belongs to a SG, by label.
+	d := obj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
+}
+
+func (hc *HabitatController) handleSecretUpdate(oldObj, newObj interface{}) {
+	// check if it belongs to a SG, by label.
+	d := newObj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(newObj)
+	}
+}
+
+func (hc *HabitatController) handleSecretDelete(obj interface{}) {
+	// check if it belongs to a SG, by label.
+	d := obj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
+}
+
+func (hc *HabitatController) handleCMAdd(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
+	fmt.Println("add cm")
+	fmt.Println(obj)
+	hc.enqueue(obj)
+}
+
+func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
+	fmt.Println("update cm")
+	fmt.Println(oldObj)
+	fmt.Println(newObj)
+	hc.enqueue(newObj)
+}
+
+func (hc *HabitatController) handleCMDelete(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
+	fmt.Println("delete cm")
+	fmt.Println(obj)
+	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleHabitatCreation(h *crv1.Habitat) error {
@@ -183,23 +396,26 @@ func (hc *HabitatController) handleHabitatCreation(h *crv1.Habitat) error {
 	}
 
 	// Create Deployment, if it doesn't already exist.
-	var d *appsv1beta1.Deployment
+	//var d *appsv1beta1.Deployment
 
-	d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Create(deployment)
+	_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Create(deployment)
 	if err != nil {
 		// Was the error due to the Deployment already existing?
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 
-		d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
+		_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
+		// TODO: take from deployments cache
+		//_, _, err := hc.deploymentInformer.GetStore().GetByKey(deployment.Name)
+		//d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Get(deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 
-		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", d.GetObjectMeta().GetName())
+		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", deployment.Name)
 	} else {
-		level.Info(hc.logger).Log("msg", "created deployment", "name", d.GetObjectMeta().GetName())
+		level.Info(hc.logger).Log("msg", "created deployment", "name", deployment.Name)
 	}
 
 	// Handle creation/updating of peer IP ConfigMap.
@@ -260,6 +476,7 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 
 			// Delete the IP in the existing ConfigMap, as it must necessarily be invalid,
 			// since there are no running Pods.
+			// TODO: take from configmap cache
 			cm, err = hc.config.KubernetesClientset.CoreV1Client.ConfigMaps(h.Namespace).Get(newCM.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
@@ -289,6 +506,7 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 
 		// The ConfigMap already exists. Is the leader still running?
 		// Was the error due to the ConfigMap already existing?
+		// TODO: take from cm cache
 		cm, err = hc.config.KubernetesClientset.CoreV1Client.ConfigMaps(h.Namespace).Get(newCM.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -366,6 +584,7 @@ func (hc *HabitatController) watchPods(ctx context.Context) {
 }
 
 func (hc *HabitatController) onPodAdd(obj interface{}) {
+
 }
 
 func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
@@ -398,7 +617,7 @@ func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
 		return
 	}
 
-	hc.enqueueHabitat(h)
+	hc.enqueue(h)
 }
 
 func (hc *HabitatController) onPodDelete(obj interface{}) {
@@ -421,7 +640,7 @@ func (hc *HabitatController) onPodDelete(obj interface{}) {
 		return
 	}
 
-	hc.enqueueHabitat(h)
+	hc.enqueue(h)
 }
 
 func (hc *HabitatController) newDeployment(h *crv1.Habitat) (*appsv1beta1.Deployment, error) {
@@ -520,6 +739,7 @@ func (hc *HabitatController) newDeployment(h *crv1.Habitat) (*appsv1beta1.Deploy
 	// If we have a secret name present we should mount that secret.
 	if h.Spec.Service.ConfigSecretName != "" {
 		// Let's make sure our secret is there before mounting it.
+		// TODO: take from secrets cache
 		secret, err := hc.config.KubernetesClientset.CoreV1().Secrets(h.Namespace).Get(h.Spec.Service.ConfigSecretName, metav1.GetOptions{})
 		if err != nil {
 			return nil, err
@@ -554,6 +774,7 @@ func (hc *HabitatController) newDeployment(h *crv1.Habitat) (*appsv1beta1.Deploy
 
 	// Handle ring key, if one is specified.
 	if ringSecretName := h.Spec.Service.RingSecretName; ringSecretName != "" {
+		// TODO: take from secrects cache
 		s, err := hc.config.KubernetesClientset.CoreV1().Secrets(apiv1.NamespaceDefault).Get(ringSecretName, metav1.GetOptions{})
 		if err != nil {
 			level.Error(hc.logger).Log("msg", "Could not find Secret containing ring key")
@@ -601,7 +822,7 @@ func (hc *HabitatController) newDeployment(h *crv1.Habitat) (*appsv1beta1.Deploy
 	return base, nil
 }
 
-func (hc *HabitatController) enqueueHabitat(obj interface{}) {
+func (hc *HabitatController) enqueue(obj interface{}) {
 	k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		level.Error(hc.logger).Log("msg", "Object key could not be retrieved", "object", obj)
@@ -623,7 +844,7 @@ func (hc *HabitatController) processNextItem() bool {
 	}
 	defer hc.queue.Done(key)
 
-	err := hc.syncHabitat(key.(string))
+	err := hc.conform(key.(string))
 	if err != nil {
 		level.Error(hc.logger).Log("msg", "Habitat could not be synced, requeueing", "msg", err)
 
@@ -637,12 +858,11 @@ func (hc *HabitatController) processNextItem() bool {
 	return true
 }
 
-// syncHabitat is where the reconciliation takes place.
-// It is invoked when any of these events happen:
-// * a Habitat was created/updated/deleted
-// * a Pod was created/updated/deleted
-func (hc *HabitatController) syncHabitat(key string) error {
-	obj, exists, err := hc.store.GetByKey(key)
+// conform is where the reconciliation takes place.
+// It is invoked when any of the following resources get created, updated or deleted.
+// ServiceGroup, Pod, Deployment, Secret or ConfigMap.
+func (hc *HabitatController) conform(key string) error {
+	obj, exists, err := hc.sgInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return err
 	}
@@ -656,8 +876,49 @@ func (hc *HabitatController) syncHabitat(key string) error {
 	if !ok {
 		return fmt.Errorf("unknown event type")
 	}
-	// Create deployment if it does not exist already.
-	return hc.handleHabitatCreation(h)
+
+	level.Debug(hc.logger).Log("function", "handleServiceGroupCreation", "msg", h.ObjectMeta.SelfLink)
+
+	// Validate object.
+	if err := validateCustomObject(*h); err != nil {
+		return err
+	}
+
+	level.Debug(hc.logger).Log("msg", "validated object")
+
+	deployment, err := hc.newDeployment(h)
+	if err != nil {
+		return err
+	}
+
+	// Create Deployment, if it doesn't already exist.
+	var d *appsv1beta1.Deployment
+
+	d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Create(deployment)
+	fmt.Println(d)
+	if err != nil {
+		// Was the error due to the Deployment already existing?
+		if !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+		// TODO: take from deployments cache
+		//_, _, err := hc.deploymentInformer.GetStore().GetByKey(deployment.Name)
+		d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", deployment.Name)
+	} else {
+		level.Info(hc.logger).Log("msg", "created deployment", "name", deployment.Name)
+	}
+
+	// Handle creation/updating of peer IP ConfigMap.
+	if err := hc.handleConfigMap(h); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (hc *HabitatController) habitatNeedsUpdate(oldHabitat, newHabitat *crv1.Habitat) bool {
@@ -689,7 +950,7 @@ func (hc *HabitatController) podNeedsUpdate(oldPod, newPod *apiv1.Pod) bool {
 func (hc *HabitatController) getHabitatFromPod(pod *apiv1.Pod) (*crv1.Habitat, error) {
 	key := habitatKeyFromPod(pod)
 
-	obj, exists, err := hc.store.GetByKey(key)
+	obj, exists, err := hc.sgInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return nil, err
 	}
@@ -699,7 +960,7 @@ func (hc *HabitatController) getHabitatFromPod(pod *apiv1.Pod) (*crv1.Habitat, e
 
 	h, ok := obj.(*crv1.Habitat)
 	if !ok {
-		return nil, fmt.Errorf("unknown object type in store: %v", obj)
+		return nil, fmt.Errorf("unknown object type in Service Group cache: %v", obj)
 	}
 
 	return h, nil
