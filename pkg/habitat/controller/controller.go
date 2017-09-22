@@ -69,7 +69,8 @@ type HabitatController struct {
 	// delay, so that jobs in a crashing loop don't fill the queue.
 	queue workqueue.RateLimitingInterface
 
-	sgInformer cache.SharedIndexInformer
+	sgInformer         cache.SharedIndexInformer
+	deploymentInformer cache.SharedIndexInformer
 }
 
 type Config struct {
@@ -106,8 +107,10 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	level.Info(hc.logger).Log("msg", "Watching Service Group objects")
 
 	hc.cacheSG()
+	hc.cacheDeployment()
 
 	go hc.sgInformer.Run(ctx.Done())
+	go hc.deploymentInformer.Run(ctx.Done())
 
 	hc.watchPods(ctx)
 
@@ -156,6 +159,44 @@ func (hc *HabitatController) cacheSG() {
 		},
 		DeleteFunc: hc.enqueueSG,
 	})
+}
+
+func (hc *HabitatController) cacheDeployment() {
+	// TODO: Do we need to add field selector/label selector.
+	source := cache.NewListWatchFromClient(
+		hc.config.KubernetesClientset.AppsV1beta1().RESTClient(),
+		"deployments",
+		apiv1.NamespaceAll,
+		fields.Everything())
+
+	hc.deploymentInformer = cache.NewSharedIndexInformer(
+		source,
+		&appsv1beta1.Deployment{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
+
+	hc.deploymentInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handleDeployAdd,
+		UpdateFunc: hc.handleDeployUpdate,
+		DeleteFunc: hc.handleDeployDelete,
+	})
+}
+
+func (hc *HabitatController) handleDeployAdd(obj interface{}) {
+	fmt.Println("add deployment")
+	fmt.Println(obj)
+}
+
+func (hc *HabitatController) handleDeployUpdate(old, curr interface{}) {
+	fmt.Println("update deployment")
+	fmt.Println(old)
+	fmt.Println(curr)
+}
+
+func (hc *HabitatController) handleDeployDelete(obj interface{}) {
+	fmt.Println("delete deployment")
+	fmt.Println(obj)
 }
 
 func (hc *HabitatController) handleServiceGroupCreation(sg *crv1.ServiceGroup) error {
