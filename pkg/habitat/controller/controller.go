@@ -840,3 +840,20 @@ func serviceGroupKeyFromPod(pod *apiv1.Pod) string {
 
 	return key
 }
+
+// TODO: fix me!
+// adjust checks and make sure all the resources we care about are in the correct state.
+func (hc *HabitatController) adjust(key string) error {
+	sgObj, exists, err := hc.sgInformer.GetIndexer().GetByKey(key)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// TODO: SG was deleted so we have to check all the rest of the resources were deleted.
+	}
+
+	sg := obj.(*crv1.ServiceGroup)
+	fmt.Println(adjusting)
+	fmt.Println(sg)
+	return nil
+}
