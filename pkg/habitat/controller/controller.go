@@ -145,25 +145,9 @@ func (hc *HabitatController) cacheSG() {
 	)
 
 	hc.sgInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: hc.enqueueSG,
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			oldSG, ok := oldObj.(*crv1.ServiceGroup)
-			if !ok {
-				level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", oldObj)
-				return
-			}
-
-			newSG, ok := newObj.(*crv1.ServiceGroup)
-			if !ok {
-				level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", newObj)
-				return
-			}
-
-			if hc.serviceGroupNeedsUpdate(oldSG, newSG) {
-				hc.enqueueSG(newSG)
-			}
-		},
-		DeleteFunc: hc.enqueueSG,
+		AddFunc:    hc.handleSGAdd,
+		UpdateFunc: hc.handleSGUpdate,
+		DeleteFunc: hc.handleSGDelete,
 	})
 }
 
@@ -236,52 +220,90 @@ func (hc *HabitatController) cacheConfigMaps() {
 	})
 }
 
+func (hc *HabitatController) handleSGAdd(obj interface{}) {
+	hc.enqueue(obj)
+}
+
+func (hc *HabitatController) handleSGUpdate(oldObj, newObj interface{}) {
+	fmt.Println("update SG")
+	fmt.Println(oldObj)
+	fmt.Println(newObj)
+	oldSG, ok := oldObj.(*crv1.ServiceGroup)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", oldObj)
+		return
+	}
+
+	newSG, ok := newObj.(*crv1.ServiceGroup)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", newObj)
+		return
+	}
+
+	if hc.serviceGroupNeedsUpdate(oldSG, newSG) {
+		hc.enqueue(newSG)
+	}
+}
+
+func (hc *HabitatController) handleSGDelete(obj interface{}) {
+	hc.enqueue(obj)
+}
+
 func (hc *HabitatController) handleDeployAdd(obj interface{}) {
 	fmt.Println("add deployment")
 	fmt.Println(obj)
+	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleDeployUpdate(old, curr interface{}) {
 	fmt.Println("update deployment")
 	fmt.Println(old)
 	fmt.Println(curr)
+	hc.enqueue(curr)
 }
 
 func (hc *HabitatController) handleDeployDelete(obj interface{}) {
 	fmt.Println("delete deployment")
 	fmt.Println(obj)
+	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleSecretAdd(obj interface{}) {
 	fmt.Println("add secret")
 	fmt.Println(obj)
+	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleSecretUpdate(old, curr interface{}) {
 	fmt.Println("update secret")
 	fmt.Println(old)
 	fmt.Println(curr)
+	hc.enqueue(curr)
 }
 
 func (hc *HabitatController) handleSecretDelete(obj interface{}) {
 	fmt.Println("delete secret")
 	fmt.Println(obj)
+	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleCMAdd(obj interface{}) {
 	fmt.Println("add cm")
 	fmt.Println(obj)
+	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleCMUpdate(old, curr interface{}) {
 	fmt.Println("update cm")
 	fmt.Println(old)
 	fmt.Println(curr)
+	hc.enqueue(curr)
 }
 
 func (hc *HabitatController) handleCMDelete(obj interface{}) {
 	fmt.Println("delete cm")
 	fmt.Println(obj)
+	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleServiceGroupCreation(sg *crv1.ServiceGroup) error {
@@ -516,7 +538,7 @@ func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
 		return
 	}
 
-	hc.enqueueSG(sg)
+	hc.enqueue(sg)
 }
 
 func (hc *HabitatController) onPodDelete(obj interface{}) {
@@ -539,7 +561,7 @@ func (hc *HabitatController) onPodDelete(obj interface{}) {
 		return
 	}
 
-	hc.enqueueSG(sg)
+	hc.enqueue(sg)
 }
 
 func (hc *HabitatController) newDeployment(sg *crv1.ServiceGroup) (*appsv1beta1.Deployment, error) {
@@ -718,7 +740,7 @@ func (hc *HabitatController) newDeployment(sg *crv1.ServiceGroup) (*appsv1beta1.
 	return base, nil
 }
 
-func (hc *HabitatController) enqueueSG(obj interface{}) {
+func (hc *HabitatController) enqueue(obj interface{}) {
 	k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(obj)
 	if err != nil {
 		level.Error(hc.logger).Log("msg", "Object key could not be retrieved", "object", obj)
@@ -740,7 +762,7 @@ func (hc *HabitatController) processNextItem() bool {
 	}
 	defer hc.queue.Done(key)
 
-	err := hc.syncServiceGroup(key.(string))
+	err := hc.conform(key.(string))
 	if err != nil {
 		level.Error(hc.logger).Log("msg", "ServiceGroup could not be synced, requeueing", "msg", err)
 
@@ -754,11 +776,10 @@ func (hc *HabitatController) processNextItem() bool {
 	return true
 }
 
-// syncServiceGroup is where the reconciliation takes place.
-// It is invoked when any of these events happen:
-// * a ServiceGroup was created/updated/deleted
-// * a Pod was created/updated/deleted
-func (hc *HabitatController) syncServiceGroup(key string) error {
+// conform is where the reconciliation takes place.
+// It is invoked when any of the following resources get created, updated or deleted.
+// ServiceGroup, Pod, Deployment, Secret or ConfigMap.
+func (hc *HabitatController) conform(key string) error {
 	obj, exists, err := hc.sgInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return err
@@ -839,21 +860,4 @@ func serviceGroupKeyFromPod(pod *apiv1.Pod) string {
 	key := fmt.Sprintf("%s/%s", pod.Namespace, sgName)
 
 	return key
-}
-
-// TODO: fix me!
-// adjust checks and make sure all the resources we care about are in the correct state.
-func (hc *HabitatController) adjust(key string) error {
-	sgObj, exists, err := hc.sgInformer.GetIndexer().GetByKey(key)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		// TODO: SG was deleted so we have to check all the rest of the resources were deleted.
-	}
-
-	sg := obj.(*crv1.ServiceGroup)
-	fmt.Println(adjusting)
-	fmt.Println(sg)
-	return nil
 }
