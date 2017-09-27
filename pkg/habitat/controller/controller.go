@@ -322,23 +322,24 @@ func (hc *HabitatController) handleServiceGroupCreation(sg *crv1.ServiceGroup) e
 	}
 
 	// Create Deployment, if it doesn't already exist.
-	var d *appsv1beta1.Deployment
+	//var d *appsv1beta1.Deployment
 
-	d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Create(deployment)
+	_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Create(deployment)
 	if err != nil {
 		// Was the error due to the Deployment already existing?
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
 		// TODO: take from deployments cache
-		d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Get(deployment.Name, metav1.GetOptions{})
+		_, _, err := hc.deploymentInformer.GetStore().GetByKey(deployment.Name)
+		//d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Get(deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
 
-		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", d.GetObjectMeta().GetName())
+		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", deployment.Name)
 	} else {
-		level.Info(hc.logger).Log("msg", "created deployment", "name", d.GetObjectMeta().GetName())
+		level.Info(hc.logger).Log("msg", "created deployment", "name", deployment.Name)
 	}
 
 	// Handle creation/updating of peer IP ConfigMap.
