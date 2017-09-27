@@ -255,11 +255,11 @@ func (hc *HabitatController) handleDeployAdd(obj interface{}) {
 	hc.enqueue(obj)
 }
 
-func (hc *HabitatController) handleDeployUpdate(old, curr interface{}) {
+func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
 	fmt.Println("update deployment")
-	fmt.Println(old)
-	fmt.Println(curr)
-	hc.enqueue(curr)
+	fmt.Println(oldObj)
+	fmt.Println(newObj)
+	hc.enqueue(newObj)
 }
 
 func (hc *HabitatController) handleDeployDelete(obj interface{}) {
@@ -274,11 +274,11 @@ func (hc *HabitatController) handleSecretAdd(obj interface{}) {
 	hc.enqueue(obj)
 }
 
-func (hc *HabitatController) handleSecretUpdate(old, curr interface{}) {
+func (hc *HabitatController) handleSecretUpdate(oldObj, newObj interface{}) {
 	fmt.Println("update secret")
-	fmt.Println(old)
-	fmt.Println(curr)
-	hc.enqueue(curr)
+	fmt.Println(oldObj)
+	fmt.Println(newObj)
+	hc.enqueue(newObj)
 }
 
 func (hc *HabitatController) handleSecretDelete(obj interface{}) {
@@ -293,11 +293,11 @@ func (hc *HabitatController) handleCMAdd(obj interface{}) {
 	hc.enqueue(obj)
 }
 
-func (hc *HabitatController) handleCMUpdate(old, curr interface{}) {
+func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
 	fmt.Println("update cm")
-	fmt.Println(old)
-	fmt.Println(curr)
-	hc.enqueue(curr)
+	fmt.Println(oldObj)
+	fmt.Println(newObj)
+	hc.enqueue(newObj)
 }
 
 func (hc *HabitatController) handleCMDelete(obj interface{}) {
