@@ -330,7 +330,7 @@ func (hc *HabitatController) handleServiceGroupCreation(sg *crv1.ServiceGroup) e
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
-
+		// TODO: take from deployments cache
 		d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Get(deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -399,6 +399,7 @@ func (hc *HabitatController) handleConfigMap(sg *crv1.ServiceGroup) error {
 
 			// Delete the IP in the existing ConfigMap, as it must necessarily be invalid,
 			// since there are no running Pods.
+			// TODO: take from configmap cache
 			cm, err = hc.config.KubernetesClientset.CoreV1Client.ConfigMaps(sg.Namespace).Get(newCM.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
@@ -428,6 +429,7 @@ func (hc *HabitatController) handleConfigMap(sg *crv1.ServiceGroup) error {
 
 		// The ConfigMap already exists. Is the leader still running?
 		// Was the error due to the ConfigMap already existing?
+		// TODO: take from cm cache
 		cm, err = hc.config.KubernetesClientset.CoreV1Client.ConfigMaps(sg.Namespace).Get(newCM.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -660,6 +662,7 @@ func (hc *HabitatController) newDeployment(sg *crv1.ServiceGroup) (*appsv1beta1.
 	// If we have a secret name present we should mount that secret.
 	if sg.Spec.Habitat.Config != "" {
 		// Let's make sure our secret is there before mounting it.
+		// TODO: take from secrets cache
 		secret, err := hc.config.KubernetesClientset.CoreV1().Secrets(sg.Namespace).Get(sg.Spec.Habitat.Config, metav1.GetOptions{})
 		if err != nil {
 			return nil, err
@@ -693,6 +696,7 @@ func (hc *HabitatController) newDeployment(sg *crv1.ServiceGroup) (*appsv1beta1.
 
 	// Handle ring key, if one is specified.
 	if ringSecretName := sg.Spec.Habitat.RingSecretName; ringSecretName != "" {
+		// TODO: take from secrects cache
 		s, err := hc.config.KubernetesClientset.CoreV1().Secrets(apiv1.NamespaceDefault).Get(ringSecretName, metav1.GetOptions{})
 		if err != nil {
 			level.Error(hc.logger).Log("msg", "Could not find Secret containing ring key")
