@@ -73,6 +73,8 @@ type HabitatController struct {
 	deploymentInformer cache.SharedIndexInformer
 	secretInformer     cache.SharedIndexInformer
 	configMapInformer  cache.SharedIndexInformer
+	// Pod cache to use in events and other places where we get. And only use get from api for running pods func.
+	podInformer cache.SharedIndexInformer
 }
 
 type Config struct {
@@ -111,14 +113,15 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	hc.cacheSG()
 	hc.cacheDeployment()
 	hc.cacheSecret()
-	hc.cacheConfigMaps()
-	hc.watchPods(ctx)
+	hc.cacheConfigMap()
+	hc.cachePods()
 
 	// TODO: should all of them have the same ctx?
 	go hc.sgInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
 	go hc.secretInformer.Run(ctx.Done())
 	go hc.configMapInformer.Run(ctx.Done())
+	go hc.podInformer.Run(ctx.Done())
 
 	// Start the synchronous queue consumer.
 	go hc.worker()
@@ -194,7 +197,7 @@ func (hc *HabitatController) cacheSecret() {
 	})
 }
 
-func (hc *HabitatController) cacheConfigMaps() {
+func (hc *HabitatController) cacheConfigMap() {
 	ls := labels.SelectorFromSet(labels.Set(map[string]string{
 		crv1.HabitatLabel:  "true",
 		crv1.TopologyLabel: "leader",
@@ -220,6 +223,28 @@ func (hc *HabitatController) cacheConfigMaps() {
 	})
 }
 
+func (hc *HabitatController) cachePods() {
+	ls := labels.SelectorFromSet(labels.Set(map[string]string{"habitat": "true"}))
+
+	source := newListWatchFromClientWithLabels(
+		hc.config.KubernetesClientset.CoreV1().RESTClient(),
+		"pods",
+		apiv1.NamespaceAll,
+		ls)
+
+	hc.podInformer = cache.NewSharedIndexInformer(
+		source,
+		&apiv1.Pod{},
+		resyncPeriod,
+		cache.Indexers{},
+	)
+
+	hc.podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.onPodAdd,
+		UpdateFunc: hc.onPodUpdate,
+		DeleteFunc: hc.onPodDelete,
+	})
+}
 func (hc *HabitatController) handleSGAdd(obj interface{}) {
 	hc.enqueue(obj)
 }
@@ -250,12 +275,22 @@ func (hc *HabitatController) handleSGDelete(obj interface{}) {
 }
 
 func (hc *HabitatController) handleDeployAdd(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("add deployment")
 	fmt.Println(obj)
 	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("update deployment")
 	fmt.Println(oldObj)
 	fmt.Println(newObj)
@@ -263,18 +298,33 @@ func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
 }
 
 func (hc *HabitatController) handleDeployDelete(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("delete deployment")
 	fmt.Println(obj)
 	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleSecretAdd(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("add secret")
 	fmt.Println(obj)
 	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleSecretUpdate(oldObj, newObj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("update secret")
 	fmt.Println(oldObj)
 	fmt.Println(newObj)
@@ -282,18 +332,33 @@ func (hc *HabitatController) handleSecretUpdate(oldObj, newObj interface{}) {
 }
 
 func (hc *HabitatController) handleSecretDelete(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("delete secret")
 	fmt.Println(obj)
 	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleCMAdd(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("add cm")
 	fmt.Println(obj)
 	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("update cm")
 	fmt.Println(oldObj)
 	fmt.Println(newObj)
@@ -301,6 +366,11 @@ func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
 }
 
 func (hc *HabitatController) handleCMDelete(obj interface{}) {
+	// TODO:
+	// check if it belongs to a SG, by label.
+
+	// if it does then enqueue thi key.
+	// if it doesnt ignore.
 	fmt.Println("delete cm")
 	fmt.Println(obj)
 	hc.enqueue(obj)
@@ -484,28 +554,6 @@ func (hc *HabitatController) handleServiceGroupDeletion(key string) error {
 	level.Info(hc.logger).Log("msg", "deleted deployment", "name", deploymentName)
 
 	return nil
-}
-
-func (hc *HabitatController) watchPods(ctx context.Context) {
-	ls := labels.SelectorFromSet(labels.Set(map[string]string{"habitat": "true"}))
-	clw := newListWatchFromClientWithLabels(
-		hc.config.KubernetesClientset.CoreV1().RESTClient(),
-		"pods",
-		apiv1.NamespaceAll,
-		ls)
-
-	_, c := cache.NewInformer(
-		clw,
-		&apiv1.Pod{},
-		resyncPeriod,
-		cache.ResourceEventHandlerFuncs{
-			AddFunc:    hc.onPodAdd,
-			UpdateFunc: hc.onPodUpdate,
-			DeleteFunc: hc.onPodDelete,
-		})
-
-	// TODO: maybe return controller and run it with others?
-	go c.Run(ctx.Done())
 }
 
 func (hc *HabitatController) onPodAdd(obj interface{}) {
@@ -799,8 +847,49 @@ func (hc *HabitatController) conform(key string) error {
 	if !ok {
 		return fmt.Errorf("unknown event type")
 	}
-	// Create deployment if it does not exist already.
-	return hc.handleServiceGroupCreation(sg)
+
+	level.Debug(hc.logger).Log("function", "handleServiceGroupCreation", "msg", sg.ObjectMeta.SelfLink)
+
+	// Validate object.
+	if err := validateCustomObject(*sg); err != nil {
+		return err
+	}
+
+	level.Debug(hc.logger).Log("msg", "validated object")
+
+	deployment, err := hc.newDeployment(sg)
+	if err != nil {
+		return err
+	}
+
+	// Create Deployment, if it doesn't already exist.
+	var d *appsv1beta1.Deployment
+
+	d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Create(deployment)
+	fmt.Println(d)
+	if err != nil {
+		// Was the error due to the Deployment already existing?
+		if !apierrors.IsAlreadyExists(err) {
+			return err
+		}
+		// TODO: take from deployments cache
+		//_, _, err := hc.deploymentInformer.GetStore().GetByKey(deployment.Name)
+		d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Get(deployment.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", deployment.Name)
+	} else {
+		level.Info(hc.logger).Log("msg", "created deployment", "name", deployment.Name)
+	}
+
+	// Handle creation/updating of peer IP ConfigMap.
+	if err := hc.handleConfigMap(sg); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (hc *HabitatController) serviceGroupNeedsUpdate(oldSG, newSG *crv1.ServiceGroup) bool {
