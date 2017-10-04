@@ -275,71 +275,58 @@ func (hc *HabitatController) handleSGDelete(obj interface{}) {
 }
 
 func (hc *HabitatController) handleDeployAdd(obj interface{}) {
-	// TODO:
-	// check if it belongs to a SG, by label.
-
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("add deployment")
-	fmt.Println(obj)
-	hc.enqueue(obj)
+	// Check if current deployment is of interest,
+	d := obj.(*appsv1beta1.Deployment)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
+	fmt.Println("no deployment added")
 }
 
 func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
-	// TODO:
 	// check if it belongs to a SG, by label.
-
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("update deployment")
-	fmt.Println(oldObj)
-	fmt.Println(newObj)
-	hc.enqueue(newObj)
+	d := newObj.(*appsv1beta1.Deployment)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(newObj)
+	}
 }
 
 func (hc *HabitatController) handleDeployDelete(obj interface{}) {
-	// TODO:
 	// check if it belongs to a SG, by label.
-
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("delete deployment")
-	fmt.Println(obj)
-	hc.enqueue(obj)
+	d := obj.(*appsv1beta1.Deployment)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
 }
 
 func (hc *HabitatController) handleSecretAdd(obj interface{}) {
-	// TODO:
 	// check if it belongs to a SG, by label.
-
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("add secret")
-	fmt.Println(obj)
-	hc.enqueue(obj)
+	d := obj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
 }
 
 func (hc *HabitatController) handleSecretUpdate(oldObj, newObj interface{}) {
-	// TODO:
 	// check if it belongs to a SG, by label.
-
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("update secret")
-	fmt.Println(oldObj)
-	fmt.Println(newObj)
-	hc.enqueue(newObj)
+	d := newObj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(newObj)
+	}
 }
 
 func (hc *HabitatController) handleSecretDelete(obj interface{}) {
-	// TODO:
 	// check if it belongs to a SG, by label.
-
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("delete secret")
-	fmt.Println(obj)
-	hc.enqueue(obj)
+	d := obj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		fmt.Println("deployment")
+		hc.enqueue(obj)
+	}
 }
 
 func (hc *HabitatController) handleCMAdd(obj interface{}) {
