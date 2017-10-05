@@ -276,7 +276,12 @@ func (hc *HabitatController) handleSGDelete(obj interface{}) {
 
 func (hc *HabitatController) handleDeployAdd(obj interface{}) {
 	// Check if current deployment is of interest,
-	d := obj.(*appsv1beta1.Deployment)
+	d, ok := obj.(*appsv1beta1.Deployment)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", obj)
+		return
+	}
+
 	if d.ObjectMeta.Labels["habitat"] == "true" {
 		fmt.Println("deployment")
 		hc.enqueue(obj)
@@ -286,7 +291,12 @@ func (hc *HabitatController) handleDeployAdd(obj interface{}) {
 
 func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
 	// check if it belongs to a SG, by label.
-	d := newObj.(*appsv1beta1.Deployment)
+	d, ok := newObj.(*appsv1beta1.Deployment)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", newObj)
+		return
+	}
+
 	if d.ObjectMeta.Labels["habitat"] == "true" {
 		fmt.Println("deployment")
 		hc.enqueue(newObj)
@@ -295,7 +305,12 @@ func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
 
 func (hc *HabitatController) handleDeployDelete(obj interface{}) {
 	// check if it belongs to a SG, by label.
-	d := obj.(*appsv1beta1.Deployment)
+	d, ok := obj.(*appsv1beta1.Deployment)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", obj)
+		return
+	}
+
 	if d.ObjectMeta.Labels["habitat"] == "true" {
 		fmt.Println("deployment")
 		hc.enqueue(obj)
@@ -544,6 +559,7 @@ func (hc *HabitatController) handleServiceGroupDeletion(key string) error {
 }
 
 func (hc *HabitatController) onPodAdd(obj interface{}) {
+
 }
 
 func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
