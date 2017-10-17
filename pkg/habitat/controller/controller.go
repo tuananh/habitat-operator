@@ -116,7 +116,6 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	hc.cacheConfigMap()
 	hc.cachePods()
 
-	// TODO: should all of them have the same ctx?
 	go hc.sgInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
 	go hc.secretInformer.Run(ctx.Done())
@@ -247,14 +246,12 @@ func (hc *HabitatController) cachePods() {
 		DeleteFunc: hc.onPodDelete,
 	})
 }
+
 func (hc *HabitatController) handleSGAdd(obj interface{}) {
 	hc.enqueue(obj)
 }
 
 func (hc *HabitatController) handleSGUpdate(oldObj, newObj interface{}) {
-	fmt.Println("update SG")
-	fmt.Println(oldObj)
-	fmt.Println(newObj)
 	oldSG, ok := oldObj.(*crv1.Habitat)
 	if !ok {
 		level.Error(hc.logger).Log("msg", "Failed to type assert ServiceGroup", "obj", oldObj)
@@ -277,7 +274,6 @@ func (hc *HabitatController) handleSGDelete(obj interface{}) {
 }
 
 func (hc *HabitatController) handleDeployAdd(obj interface{}) {
-	// Check if current deployment is of interest,
 	d, ok := obj.(*appsv1beta1.Deployment)
 	if !ok {
 		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", obj)
@@ -285,14 +281,11 @@ func (hc *HabitatController) handleDeployAdd(obj interface{}) {
 	}
 
 	if d.ObjectMeta.Labels["habitat"] == "true" {
-		fmt.Println("deployment")
 		hc.enqueue(obj)
 	}
-	fmt.Println("no deployment added")
 }
 
 func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
-	// check if it belongs to a SG, by label.
 	d, ok := newObj.(*appsv1beta1.Deployment)
 	if !ok {
 		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", newObj)
@@ -300,13 +293,11 @@ func (hc *HabitatController) handleDeployUpdate(oldObj, newObj interface{}) {
 	}
 
 	if d.ObjectMeta.Labels["habitat"] == "true" {
-		fmt.Println("deployment")
 		hc.enqueue(newObj)
 	}
 }
 
 func (hc *HabitatController) handleDeployDelete(obj interface{}) {
-	// check if it belongs to a SG, by label.
 	d, ok := obj.(*appsv1beta1.Deployment)
 	if !ok {
 		level.Error(hc.logger).Log("msg", "Failed to type assert deployment", "obj", obj)
@@ -314,70 +305,123 @@ func (hc *HabitatController) handleDeployDelete(obj interface{}) {
 	}
 
 	if d.ObjectMeta.Labels["habitat"] == "true" {
-		fmt.Println("deployment")
 		hc.enqueue(obj)
 	}
 }
 
 func (hc *HabitatController) handleSecretAdd(obj interface{}) {
-	// check if it belongs to a SG, by label.
 	d := obj.(*apiv1.Secret)
 	if d.ObjectMeta.Labels["habitat"] == "true" {
-		fmt.Println("deployment")
 		hc.enqueue(obj)
 	}
 }
 
 func (hc *HabitatController) handleSecretUpdate(oldObj, newObj interface{}) {
-	// check if it belongs to a SG, by label.
 	d := newObj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		hc.enqueue(newObj)
+	}
+}
+
+func (hc *HabitatController) handleSecretDelete(obj interface{}) {
+	d := obj.(*apiv1.Secret)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		hc.enqueue(obj)
+	}
+}
+
+func (hc *HabitatController) handleCMAdd(obj interface{}) {
+	d := obj.(*apiv1.ConfigMap)
+	if d.ObjectMeta.Labels["habitat"] == "true" {
+		hc.enqueue(obj)
+	}
+}
+
+func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
+	d := newObj.(*apiv1.ConfigMap)
 	if d.ObjectMeta.Labels["habitat"] == "true" {
 		fmt.Println("deployment")
 		hc.enqueue(newObj)
 	}
 }
 
-func (hc *HabitatController) handleSecretDelete(obj interface{}) {
-	// check if it belongs to a SG, by label.
-	d := obj.(*apiv1.Secret)
-	if d.ObjectMeta.Labels["habitat"] == "true" {
-		fmt.Println("deployment")
+func (hc *HabitatController) handleCMDelete(obj interface{}) {
+	cm := obj.(*apiv1.ConfigMap)
+	if cm.ObjectMeta.Labels["habitat"] == "true" {
 		hc.enqueue(obj)
 	}
 }
 
-func (hc *HabitatController) handleCMAdd(obj interface{}) {
-	// TODO:
-	// check if it belongs to a SG, by label.
+func (hc *HabitatController) onPodAdd(obj interface{}) {
+	pod := obj.(*apiv1.Pod)
+	if pod.ObjectMeta.Labels["habitat"] == "true" {
+		hc.enqueue(obj)
+	}
 
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("add cm")
-	fmt.Println(obj)
-	hc.enqueue(obj)
 }
 
-func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
-	// TODO:
-	// check if it belongs to a SG, by label.
+func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
+	oldPod, ok1 := oldObj.(*apiv1.Pod)
+	if !ok1 {
+		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", oldObj)
+		return
+	}
 
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("update cm")
-	fmt.Println(oldObj)
-	fmt.Println(newObj)
-	hc.enqueue(newObj)
+	if oldPod.ObjectMeta.Labels["habitat"] != "true" {
+		return
+	}
+
+	newPod, ok2 := newObj.(*apiv1.Pod)
+	if !ok2 {
+		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", newObj)
+		return
+	}
+
+	if !hc.podNeedsUpdate(oldPod, newPod) {
+		return
+	}
+
+	h, err := hc.getHabitatFromPod(newPod)
+	if err != nil {
+		if hErr, ok := err.(habitatNotFoundError); !ok {
+			level.Error(hc.logger).Log("msg", hErr)
+			return
+		}
+
+		// This only means the Pod and the Habitat watchers are not in sync.
+		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "onPodUpdate")
+
+		return
+	}
+
+	hc.enqueue(h)
 }
 
-func (hc *HabitatController) handleCMDelete(obj interface{}) {
-	// TODO:
-	// check if it belongs to a SG, by label.
+func (hc *HabitatController) onPodDelete(obj interface{}) {
+	pod, ok := obj.(*apiv1.Pod)
+	if !ok {
+		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", obj)
+		return
+	}
 
-	// if it does then enqueue thi key.
-	// if it doesnt ignore.
-	fmt.Println("delete cm")
-	fmt.Println(obj)
-	hc.enqueue(obj)
+	if pod.ObjectMeta.Labels["habitat"] != "true" {
+		return
+	}
+
+	h, err := hc.getHabitatFromPod(pod)
+	if err != nil {
+		if hErr, ok := err.(habitatNotFoundError); !ok {
+			level.Error(hc.logger).Log("msg", hErr)
+			return
+		}
+
+		// This only means the Pod and the Habitat watchers are not in sync.
+		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "onPodDelete")
+
+		return
+	}
+
+	hc.enqueue(h)
 }
 
 func (hc *HabitatController) handleHabitatCreation(h *crv1.Habitat) error {
@@ -560,87 +604,6 @@ func (hc *HabitatController) handleHabitatDeletion(key string) error {
 	level.Info(hc.logger).Log("msg", "deleted deployment", "name", deploymentName)
 
 	return nil
-}
-
-func (hc *HabitatController) watchPods(ctx context.Context) {
-	ls := labels.SelectorFromSet(labels.Set(map[string]string{crv1.HabitatLabel: "true"}))
-	clw := newListWatchFromClientWithLabels(
-		hc.config.KubernetesClientset.CoreV1().RESTClient(),
-		"pods",
-		apiv1.NamespaceAll,
-		ls)
-
-	_, c := cache.NewInformer(
-		clw,
-		&apiv1.Pod{},
-		resyncPeriod,
-		cache.ResourceEventHandlerFuncs{
-			AddFunc:    hc.onPodAdd,
-			UpdateFunc: hc.onPodUpdate,
-			DeleteFunc: hc.onPodDelete,
-		})
-
-	go c.Run(ctx.Done())
-}
-
-func (hc *HabitatController) onPodAdd(obj interface{}) {
-
-}
-
-func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
-	oldPod, ok1 := oldObj.(*apiv1.Pod)
-	if !ok1 {
-		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", oldObj)
-		return
-	}
-
-	newPod, ok2 := newObj.(*apiv1.Pod)
-	if !ok2 {
-		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", newObj)
-		return
-	}
-
-	if !hc.podNeedsUpdate(oldPod, newPod) {
-		return
-	}
-
-	h, err := hc.getHabitatFromPod(newPod)
-	if err != nil {
-		if hErr, ok := err.(habitatNotFoundError); !ok {
-			level.Error(hc.logger).Log("msg", hErr)
-			return
-		}
-
-		// This only means the Pod and the Habitat watchers are not in sync.
-		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "onPodUpdate")
-
-		return
-	}
-
-	hc.enqueue(h)
-}
-
-func (hc *HabitatController) onPodDelete(obj interface{}) {
-	pod, ok := obj.(*apiv1.Pod)
-	if !ok {
-		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", obj)
-		return
-	}
-
-	h, err := hc.getHabitatFromPod(pod)
-	if err != nil {
-		if hErr, ok := err.(habitatNotFoundError); !ok {
-			level.Error(hc.logger).Log("msg", hErr)
-			return
-		}
-
-		// This only means the Pod and the Habitat watchers are not in sync.
-		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "onPodDelete")
-
-		return
-	}
-
-	hc.enqueue(h)
 }
 
 func (hc *HabitatController) newDeployment(h *crv1.Habitat) (*appsv1beta1.Deployment, error) {
