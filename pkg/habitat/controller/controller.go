@@ -71,7 +71,6 @@ type HabitatController struct {
 
 	sgInformer         cache.SharedIndexInformer
 	deploymentInformer cache.SharedIndexInformer
-	secretInformer     cache.SharedIndexInformer
 	configMapInformer  cache.SharedIndexInformer
 }
 
@@ -307,30 +306,10 @@ func (hc *HabitatController) handleDeployDelete(obj interface{}) {
 	}
 }
 
-func (hc *HabitatController) handleSecretAdd(obj interface{}) {
-	d := obj.(*apiv1.Secret)
-	if d.ObjectMeta.Labels["habitat"] == "true" {
-		hc.enqueue(obj)
-	}
-}
-
-func (hc *HabitatController) handleSecretUpdate(oldObj, newObj interface{}) {
-	d := newObj.(*apiv1.Secret)
-	if d.ObjectMeta.Labels["habitat"] == "true" {
-		hc.enqueue(newObj)
-	}
-}
-
-func (hc *HabitatController) handleSecretDelete(obj interface{}) {
-	d := obj.(*apiv1.Secret)
-	if d.ObjectMeta.Labels["habitat"] == "true" {
-		hc.enqueue(obj)
-	}
-}
-
 func (hc *HabitatController) handleCMAdd(obj interface{}) {
 	d := obj.(*apiv1.ConfigMap)
 	if d.ObjectMeta.Labels["habitat"] == "true" {
+		// TODO: enqueue all in namespace
 		hc.enqueue(obj)
 	}
 }
@@ -338,7 +317,7 @@ func (hc *HabitatController) handleCMAdd(obj interface{}) {
 func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
 	d := newObj.(*apiv1.ConfigMap)
 	if d.ObjectMeta.Labels["habitat"] == "true" {
-		fmt.Println("deployment")
+		// TODO: enqueue all in namespace
 		hc.enqueue(newObj)
 	}
 }
@@ -346,6 +325,7 @@ func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
 func (hc *HabitatController) handleCMDelete(obj interface{}) {
 	cm := obj.(*apiv1.ConfigMap)
 	if cm.ObjectMeta.Labels["habitat"] == "true" {
+		// TODO: enqueue all in namespace
 		hc.enqueue(obj)
 	}
 }
@@ -353,9 +333,15 @@ func (hc *HabitatController) handleCMDelete(obj interface{}) {
 func (hc *HabitatController) onPodAdd(obj interface{}) {
 	pod := obj.(*apiv1.Pod)
 	if pod.ObjectMeta.Labels["habitat"] == "true" {
-		hc.enqueue(obj)
+		h, err := hc.getHabitatFromPod(pod)
+		if err != nil {
+			if hErr, ok := err.(habitatNotFoundError); !ok {
+				level.Error(hc.logger).Log("msg", hErr)
+				return
+			}
+			hc.enqueue(h)
+		}
 	}
-
 }
 
 func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
