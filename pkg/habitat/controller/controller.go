@@ -69,7 +69,7 @@ type HabitatController struct {
 	// delay, so that jobs in a crashing loop don't fill the queue.
 	queue workqueue.RateLimitingInterface
 
-	sgInformer         cache.SharedIndexInformer
+	habInformer        cache.SharedIndexInformer
 	deploymentInformer cache.SharedIndexInformer
 	configMapInformer  cache.SharedIndexInformer
 }
@@ -109,13 +109,11 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 
 	hc.cacheSG()
 	hc.cacheDeployment()
-	hc.cacheSecret()
 	hc.cacheConfigMap()
 	hc.cachePods(ctx)
 
-	go hc.sgInformer.Run(ctx.Done())
+	go hc.habInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
-	go hc.secretInformer.Run(ctx.Done())
 	go hc.configMapInformer.Run(ctx.Done())
 
 	// Start the synchronous queue consumer.
@@ -135,7 +133,7 @@ func (hc *HabitatController) cacheSG() {
 		apiv1.NamespaceAll,
 		fields.Everything())
 
-	hc.sgInformer = cache.NewSharedIndexInformer(
+	hc.habInformer = cache.NewSharedIndexInformer(
 		source,
 
 		// The object type.
@@ -144,7 +142,7 @@ func (hc *HabitatController) cacheSG() {
 		cache.Indexers{},
 	)
 
-	hc.sgInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	hc.habInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    hc.handleSGAdd,
 		UpdateFunc: hc.handleSGUpdate,
 		DeleteFunc: hc.handleSGDelete,
@@ -169,27 +167,6 @@ func (hc *HabitatController) cacheDeployment() {
 		AddFunc:    hc.handleDeployAdd,
 		UpdateFunc: hc.handleDeployUpdate,
 		DeleteFunc: hc.handleDeployDelete,
-	})
-}
-
-func (hc *HabitatController) cacheSecret() {
-	source := cache.NewListWatchFromClient(
-		hc.config.KubernetesClientset.Core().RESTClient(),
-		"secrets",
-		apiv1.NamespaceAll,
-		fields.Everything())
-
-	hc.secretInformer = cache.NewSharedIndexInformer(
-		source,
-		&apiv1.Secret{},
-		resyncPeriod,
-		cache.Indexers{},
-	)
-
-	hc.secretInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    hc.handleSecretAdd,
-		UpdateFunc: hc.handleSecretUpdate,
-		DeleteFunc: hc.handleSecretDelete,
 	})
 }
 
@@ -307,27 +284,33 @@ func (hc *HabitatController) handleDeployDelete(obj interface{}) {
 }
 
 func (hc *HabitatController) handleCMAdd(obj interface{}) {
-	d := obj.(*apiv1.ConfigMap)
-	if d.ObjectMeta.Labels["habitat"] == "true" {
-		// TODO: enqueue all in namespace
-		hc.enqueue(obj)
+	cm := obj.(*apiv1.ConfigMap)
+	if cm.ObjectMeta.Labels["habitat"] == "true" {
+		hc.enqueueNs(cm.GetNamespace())
 	}
 }
 
 func (hc *HabitatController) handleCMUpdate(oldObj, newObj interface{}) {
-	d := newObj.(*apiv1.ConfigMap)
-	if d.ObjectMeta.Labels["habitat"] == "true" {
-		// TODO: enqueue all in namespace
-		hc.enqueue(newObj)
+	cm := newObj.(*apiv1.ConfigMap)
+	if cm.ObjectMeta.Labels["habitat"] == "true" {
+		hc.enqueueNs(cm.GetNamespace())
 	}
 }
 
 func (hc *HabitatController) handleCMDelete(obj interface{}) {
 	cm := obj.(*apiv1.ConfigMap)
 	if cm.ObjectMeta.Labels["habitat"] == "true" {
-		// TODO: enqueue all in namespace
-		hc.enqueue(obj)
+		hc.enqueueNs(cm.GetNamespace())
 	}
+}
+
+func (hc *HabitatController) enqueueNs(ns string) {
+	cache.ListAll(hc.habInformer.GetStore(), labels.Everything(), func(obj interface{}) {
+		h := obj.(*crv1.Habitat)
+		if h.Namespace == ns {
+			hc.enqueue(h)
+		}
+	})
 }
 
 func (hc *HabitatController) onPodAdd(obj interface{}) {
@@ -802,7 +785,7 @@ func (hc *HabitatController) processNextItem() bool {
 // It is invoked when any of the following resources get created, updated or deleted.
 // ServiceGroup, Pod, Deployment, Secret or ConfigMap.
 func (hc *HabitatController) conform(key string) error {
-	obj, exists, err := hc.sgInformer.GetStore().GetByKey(key)
+	obj, exists, err := hc.habInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return err
 	}
@@ -888,7 +871,7 @@ func (hc *HabitatController) podNeedsUpdate(oldPod, newPod *apiv1.Pod) bool {
 func (hc *HabitatController) getHabitatFromPod(pod *apiv1.Pod) (*crv1.Habitat, error) {
 	key := habitatKeyFromPod(pod)
 
-	obj, exists, err := hc.sgInformer.GetStore().GetByKey(key)
+	obj, exists, err := hc.habInformer.GetStore().GetByKey(key)
 	if err != nil {
 		return nil, err
 	}
