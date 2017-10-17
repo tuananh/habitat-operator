@@ -73,8 +73,6 @@ type HabitatController struct {
 	deploymentInformer cache.SharedIndexInformer
 	secretInformer     cache.SharedIndexInformer
 	configMapInformer  cache.SharedIndexInformer
-	// Pod cache to use in events and other places where we get. And only use get from api for running pods func.
-	podInformer cache.SharedIndexInformer
 }
 
 type Config struct {
@@ -114,13 +112,12 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	hc.cacheDeployment()
 	hc.cacheSecret()
 	hc.cacheConfigMap()
-	hc.cachePods()
+	hc.cachePods(ctx)
 
 	go hc.sgInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
 	go hc.secretInformer.Run(ctx.Done())
 	go hc.configMapInformer.Run(ctx.Done())
-	go hc.podInformer.Run(ctx.Done())
 
 	// Start the synchronous queue consumer.
 	go hc.worker()
@@ -156,7 +153,6 @@ func (hc *HabitatController) cacheSG() {
 }
 
 func (hc *HabitatController) cacheDeployment() {
-	// TODO: Do we need to add field selector/label selector.
 	source := cache.NewListWatchFromClient(
 		hc.config.KubernetesClientset.AppsV1beta1().RESTClient(),
 		"deployments",
@@ -224,7 +220,7 @@ func (hc *HabitatController) cacheConfigMap() {
 	})
 }
 
-func (hc *HabitatController) cachePods() {
+func (hc *HabitatController) cachePods(ctx context.Context) {
 	ls := labels.SelectorFromSet(labels.Set(map[string]string{"habitat": "true"}))
 
 	source := newListWatchFromClientWithLabels(
@@ -233,18 +229,20 @@ func (hc *HabitatController) cachePods() {
 		apiv1.NamespaceAll,
 		ls)
 
-	hc.podInformer = cache.NewSharedIndexInformer(
+	p := cache.NewSharedIndexInformer(
 		source,
 		&apiv1.Pod{},
 		resyncPeriod,
 		cache.Indexers{},
 	)
 
-	hc.podInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	p.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    hc.onPodAdd,
 		UpdateFunc: hc.onPodUpdate,
 		DeleteFunc: hc.onPodDelete,
 	})
+
+	go p.Run(ctx.Done())
 }
 
 func (hc *HabitatController) handleSGAdd(obj interface{}) {
@@ -450,9 +448,6 @@ func (hc *HabitatController) handleHabitatCreation(h *crv1.Habitat) error {
 		}
 
 		_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
-		// TODO: take from deployments cache
-		//_, _, err := hc.deploymentInformer.GetStore().GetByKey(deployment.Name)
-		//d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(sg.Namespace).Get(deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
@@ -520,7 +515,6 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 
 			// Delete the IP in the existing ConfigMap, as it must necessarily be invalid,
 			// since there are no running Pods.
-			// TODO: take from configmap cache
 			cm, err = hc.config.KubernetesClientset.CoreV1Client.ConfigMaps(h.Namespace).Get(newCM.Name, metav1.GetOptions{})
 			if err != nil {
 				return err
@@ -550,7 +544,6 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 
 		// The ConfigMap already exists. Is the leader still running?
 		// Was the error due to the ConfigMap already existing?
-		// TODO: take from cm cache
 		cm, err = hc.config.KubernetesClientset.CoreV1Client.ConfigMaps(h.Namespace).Get(newCM.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
@@ -702,7 +695,6 @@ func (hc *HabitatController) newDeployment(h *crv1.Habitat) (*appsv1beta1.Deploy
 	// If we have a secret name present we should mount that secret.
 	if h.Spec.Service.ConfigSecretName != "" {
 		// Let's make sure our secret is there before mounting it.
-		// TODO: take from secrets cache
 		secret, err := hc.config.KubernetesClientset.CoreV1().Secrets(h.Namespace).Get(h.Spec.Service.ConfigSecretName, metav1.GetOptions{})
 		if err != nil {
 			return nil, err
@@ -737,7 +729,6 @@ func (hc *HabitatController) newDeployment(h *crv1.Habitat) (*appsv1beta1.Deploy
 
 	// Handle ring key, if one is specified.
 	if ringSecretName := h.Spec.Service.RingSecretName; ringSecretName != "" {
-		// TODO: take from secrects cache
 		s, err := hc.config.KubernetesClientset.CoreV1().Secrets(apiv1.NamespaceDefault).Get(ringSecretName, metav1.GetOptions{})
 		if err != nil {
 			level.Error(hc.logger).Log("msg", "Could not find Secret containing ring key")
@@ -864,8 +855,6 @@ func (hc *HabitatController) conform(key string) error {
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
-		// TODO: take from deployments cache
-		//_, _, err := hc.deploymentInformer.GetStore().GetByKey(deployment.Name)
 		d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
