@@ -391,49 +391,6 @@ func (hc *HabitatController) handlePodDelete(obj interface{}) {
 	hc.enqueue(h)
 }
 
-func (hc *HabitatController) handleHabitatCreation(h *crv1.Habitat) error {
-	level.Debug(hc.logger).Log("function", "handleHabitatCreation", "msg", h.ObjectMeta.SelfLink)
-
-	// Validate object.
-	if err := validateCustomObject(*h); err != nil {
-		return err
-	}
-
-	level.Debug(hc.logger).Log("msg", "validated object")
-
-	deployment, err := hc.newDeployment(h)
-	if err != nil {
-		return err
-	}
-
-	// Create Deployment, if it doesn't already exist.
-	//var d *appsv1beta1.Deployment
-
-	_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Create(deployment)
-	if err != nil {
-		// Was the error due to the Deployment already existing?
-		if !apierrors.IsAlreadyExists(err) {
-			return err
-		}
-
-		_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-
-		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", deployment.Name)
-	} else {
-		level.Info(hc.logger).Log("msg", "created deployment", "name", deployment.Name)
-	}
-
-	// Handle creation/updating of peer IP ConfigMap.
-	if err := hc.handleConfigMap(h); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (hc *HabitatController) getRunningPods(namespace string) ([]apiv1.Pod, error) {
 	fs := fields.SelectorFromSet(fields.Set{
 		"status.phase": "Running",
@@ -474,7 +431,6 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 	if len(runningPods) == 0 {
 		// No running Pods, create an empty ConfigMap.
 		newCM := newConfigMap("")
-
 		cm, err := hc.config.KubernetesClientset.CoreV1().ConfigMaps(h.Namespace).Create(newCM)
 		if err != nil {
 			// Was the error due to the ConfigMap already existing?
@@ -492,6 +448,7 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 			if err := hc.writeLeaderIP(cm, ""); err != nil {
 				return err
 			}
+			return nil
 		}
 
 		level.Info(hc.logger).Log("msg", "created peer IP ConfigMap", "name", newCM.Name)
