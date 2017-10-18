@@ -110,7 +110,7 @@ func (hc *HabitatController) Run(ctx context.Context) error {
 	hc.cacheSG()
 	hc.cacheDeployment()
 	hc.cacheConfigMap()
-	hc.cachePods(ctx)
+	hc.watchPods(ctx)
 
 	go hc.habInformer.Run(ctx.Done())
 	go hc.deploymentInformer.Run(ctx.Done())
@@ -196,7 +196,7 @@ func (hc *HabitatController) cacheConfigMap() {
 	})
 }
 
-func (hc *HabitatController) cachePods(ctx context.Context) {
+func (hc *HabitatController) watchPods(ctx context.Context) {
 	ls := labels.SelectorFromSet(labels.Set(map[string]string{"habitat": "true"}))
 
 	source := newListWatchFromClientWithLabels(
@@ -205,20 +205,20 @@ func (hc *HabitatController) cachePods(ctx context.Context) {
 		apiv1.NamespaceAll,
 		ls)
 
-	p := cache.NewSharedIndexInformer(
+	c := cache.NewSharedIndexInformer(
 		source,
 		&apiv1.Pod{},
 		resyncPeriod,
 		cache.Indexers{},
 	)
 
-	p.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    hc.onPodAdd,
-		UpdateFunc: hc.onPodUpdate,
-		DeleteFunc: hc.onPodDelete,
+	c.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    hc.handlePodAdd,
+		UpdateFunc: hc.handlePodUpdate,
+		DeleteFunc: hc.handlePodDelete,
 	})
 
-	go p.Run(ctx.Done())
+	go c.Run(ctx.Done())
 }
 
 func (hc *HabitatController) handleSGAdd(obj interface{}) {
@@ -313,7 +313,7 @@ func (hc *HabitatController) enqueueNs(ns string) {
 	})
 }
 
-func (hc *HabitatController) onPodAdd(obj interface{}) {
+func (hc *HabitatController) handlePodAdd(obj interface{}) {
 	pod := obj.(*apiv1.Pod)
 	if pod.ObjectMeta.Labels["habitat"] == "true" {
 		h, err := hc.getHabitatFromPod(pod)
@@ -327,7 +327,7 @@ func (hc *HabitatController) onPodAdd(obj interface{}) {
 	}
 }
 
-func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
+func (hc *HabitatController) handlePodUpdate(oldObj, newObj interface{}) {
 	oldPod, ok1 := oldObj.(*apiv1.Pod)
 	if !ok1 {
 		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", oldObj)
@@ -356,7 +356,7 @@ func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
 		}
 
 		// This only means the Pod and the Habitat watchers are not in sync.
-		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "onPodUpdate")
+		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "handlePodUpdate")
 
 		return
 	}
@@ -364,7 +364,7 @@ func (hc *HabitatController) onPodUpdate(oldObj, newObj interface{}) {
 	hc.enqueue(h)
 }
 
-func (hc *HabitatController) onPodDelete(obj interface{}) {
+func (hc *HabitatController) handlePodDelete(obj interface{}) {
 	pod, ok := obj.(*apiv1.Pod)
 	if !ok {
 		level.Error(hc.logger).Log("msg", "Failed to type assert pod", "obj", obj)
@@ -383,7 +383,7 @@ func (hc *HabitatController) onPodDelete(obj interface{}) {
 		}
 
 		// This only means the Pod and the Habitat watchers are not in sync.
-		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "onPodDelete")
+		level.Debug(hc.logger).Log("msg", "Habitat not found", "function", "handlePodDelete")
 
 		return
 	}
@@ -783,7 +783,7 @@ func (hc *HabitatController) processNextItem() bool {
 
 // conform is where the reconciliation takes place.
 // It is invoked when any of the following resources get created, updated or deleted.
-// ServiceGroup, Pod, Deployment, Secret or ConfigMap.
+// ServiceGroup, Pod, Deployment, ConfigMap.
 func (hc *HabitatController) conform(key string) error {
 	obj, exists, err := hc.habInformer.GetStore().GetByKey(key)
 	if err != nil {
@@ -815,16 +815,13 @@ func (hc *HabitatController) conform(key string) error {
 	}
 
 	// Create Deployment, if it doesn't already exist.
-	var d *appsv1beta1.Deployment
-
-	d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Create(deployment)
-	fmt.Println(d)
+	_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Create(deployment)
 	if err != nil {
 		// Was the error due to the Deployment already existing?
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
-		d, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
+		_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
 		if err != nil {
 			return err
 		}
