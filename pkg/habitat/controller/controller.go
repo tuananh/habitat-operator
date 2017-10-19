@@ -172,8 +172,7 @@ func (hc *HabitatController) cacheDeployment() {
 
 func (hc *HabitatController) cacheConfigMap() {
 	ls := labels.SelectorFromSet(labels.Set(map[string]string{
-		crv1.HabitatLabel:  "true",
-		crv1.TopologyLabel: "leader",
+		crv1.HabitatLabel: "true",
 	}))
 
 	source := newListWatchFromClientWithLabels(
@@ -430,29 +429,31 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 
 	if len(runningPods) == 0 {
 		// No running Pods, create an empty ConfigMap.
-		newCM := newConfigMap("")
+		newCM := newConfigMap("", h.Namespace)
 		cm, err := hc.config.KubernetesClientset.CoreV1().ConfigMaps(h.Namespace).Create(newCM)
 		if err != nil {
 			// Was the error due to the ConfigMap already existing?
 			if !apierrors.IsAlreadyExists(err) {
 				return err
 			}
+			k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(newCM)
+			if err != nil {
+				level.Error(hc.logger).Log("msg", "ConfigMap key could not be retrieved", "CM", newCM)
+				return err
+			}
 
 			// Delete the IP in the existing ConfigMap, as it must necessarily be invalid,
 			// since there are no running Pods.
-			obj, exists, err := hc.configMapInformer.GetIndexer().GetByKey(cm.Namespace + "/" + cm.Name)
+			obj, exists, err := hc.configMapInformer.GetStore().GetByKey(k)
 			if err != nil {
 				return err
 			}
 			if !exists {
-				fmt.Println("does not exist")
-				fmt.Println(cm.Namespace + "/" + cm.Name)
-				// TODO: log error
 				return nil
 			}
+
 			cm = obj.(*apiv1.ConfigMap)
-			fmt.Println("does exist")
-			fmt.Println(cm)
+
 			if err := hc.writeLeaderIP(cm, ""); err != nil {
 				return err
 			}
@@ -467,7 +468,13 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 	// There are running Pods, add the IP of one of them to the ConfigMap.
 	leaderIP := runningPods[0].Status.PodIP
 
-	newCM := newConfigMap(leaderIP)
+	newCM := newConfigMap(leaderIP, h.Namespace)
+
+	k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(newCM)
+	if err != nil {
+		level.Error(hc.logger).Log("msg", "ConfigMap key could not be retrieved", "CM", newCM)
+		return err
+	}
 
 	cm, err := hc.config.KubernetesClientset.CoreV1Client.ConfigMaps(h.Namespace).Create(newCM)
 	if err != nil {
@@ -478,18 +485,15 @@ func (hc *HabitatController) handleConfigMap(h *crv1.Habitat) error {
 
 		// The ConfigMap already exists. Is the leader still running?
 		// Was the error due to the ConfigMap already existing?
-		obj, exists, err := hc.configMapInformer.GetIndexer().GetByKey(cm.Namespace + "/" + cm.Name)
+		obj, exists, err := hc.configMapInformer.GetStore().GetByKey(k)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			fmt.Println("does not exist")
-			fmt.Println(cm.Namespace + "/" + cm.Name)
 			return nil
 		}
+
 		cm = obj.(*apiv1.ConfigMap)
-		fmt.Println("does exist")
-		fmt.Println(cm)
 
 		curLeader := cm.Data[peerFile]
 
@@ -858,10 +862,14 @@ func (hc *HabitatController) getHabitatFromPod(pod *apiv1.Pod) (*crv1.Habitat, e
 	return h, nil
 }
 
-func newConfigMap(ip string) *apiv1.ConfigMap {
+func newConfigMap(ip, ns string) *apiv1.ConfigMap {
 	return &apiv1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: configMapName,
+			Name:      configMapName,
+			Namespace: ns,
+			Labels: map[string]string{
+				crv1.HabitatLabel: "true",
+			},
 		},
 		Data: map[string]string{
 			peerFile: ip,
