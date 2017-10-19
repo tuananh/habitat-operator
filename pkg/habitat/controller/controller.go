@@ -793,18 +793,30 @@ func (hc *HabitatController) conform(key string) error {
 	}
 
 	// Create Deployment, if it doesn't already exist.
+	// TODO: reverse conditions?
 	_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Create(deployment)
 	if err != nil {
 		// Was the error due to the Deployment already existing?
 		if !apierrors.IsAlreadyExists(err) {
 			return err
 		}
-		_, err = hc.config.KubernetesClientset.AppsV1beta1Client.Deployments(h.Namespace).Get(deployment.Name, metav1.GetOptions{})
+
+		k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(deployment)
+		if err != nil {
+			level.Error(hc.logger).Log("msg", "Deployment key could not be retrieved", "Deployment", deployment)
+			return err
+		}
+		obj, exists, err := hc.deploymentInformer.GetStore().GetByKey(k)
 		if err != nil {
 			return err
 		}
+		if !exists {
+			return nil
+		}
 
-		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", deployment.Name)
+		d := obj.(*appsv1beta1.Deployment)
+
+		level.Debug(hc.logger).Log("msg", "deployment already existed", "name", d.Name)
 	} else {
 		level.Info(hc.logger).Log("msg", "created deployment", "name", deployment.Name)
 	}
